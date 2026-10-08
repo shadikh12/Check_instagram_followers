@@ -15,7 +15,8 @@ Usage:
 
 How to get the files:
     Instagram > Settings > Accounts Center > Your information and permissions >
-    Download your information > choose "Followers and following", format = HTML.
+    Download your information > choose "Followers and following", format = HTML,
+    Date range = "All time" (the default "Last year" leaves out older followers).
     Put the downloaded zip (or the unzipped folder) next to this script and run it -
     the files are found automatically, no need to unzip.
 
@@ -26,6 +27,7 @@ import argparse
 import re
 import sys
 import zipfile
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
@@ -100,12 +102,35 @@ def _describe(source):
     return f"{source[0]} -> {source[1]}" if isinstance(source, tuple) else str(source)
 
 
+_DATE_RANGE_RE = re.compile(
+    r'requested from <time datetime="(\d{4}-\d{2}-\d{2})[^"]*">.*?'
+    r'to <time datetime="(\d{4}-\d{2}-\d{2})', re.S)
+
+
+def _warn_if_date_limited(html, source):
+    """Instagram's export defaults to "Last year", which drops older followers and
+    makes them look like they don't follow you back."""
+    m = _DATE_RANGE_RE.search(html)
+    if not m:
+        return
+    start, end = (date.fromisoformat(d) for d in m.groups())
+    if (end - start).days <= 400:
+        print(
+            f"WARNING: {_describe(source)} only covers {start} to {end}.\n"
+            "  Anyone who followed (or was followed) before that is missing, so results\n"
+            "  will be wrong. Re-download the export with Date range = 'All time'.\n",
+            file=sys.stderr,
+        )
+
+
 def load_usernames(sources):
     """Read one or more Instagram export HTML files and return a set of usernames."""
     usernames = set()
     for source in sources:
+        html = _read_source(source)
+        _warn_if_date_limited(html, source)
         parser = _ProfileLinkParser()
-        parser.feed(_read_source(source))
+        parser.feed(html)
 
         found = {u for href, text in parser.links if (u := _username_from_link(href, text))}
         if not found:
